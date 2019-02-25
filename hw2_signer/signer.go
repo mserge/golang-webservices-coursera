@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -10,9 +11,9 @@ import (
 // сюда писать код
 
 func ExecuteJob(wg *sync.WaitGroup, worker job, first bool, in, out chan interface{}) {
-	log.Printf("Start %v with channel %v %v ", worker, in, out)
+	//log.Printf("Start %v with channel %v %v ", worker, in, out)
 	worker(in, out)
-	log.Printf("Finish %v with channel %v %v ", worker, in, out)
+	//log.Printf("Finish %v with channel %v %v ", worker, in, out)
 	if first {
 		close(in) //close for first only
 	}
@@ -40,36 +41,43 @@ func SingleHash(in, out chan interface{}) {
 		case string:
 			data = value.(string)
 		case int:
-			data = string(value.(int))
+			data = fmt.Sprintf("%d", value.(int))
 		default:
 			panic("Non string data sent")
 		}
-		out <- DataSignerCrc32(data) + "~" + DataSignerCrc32(DataSignerMd5(data))
+		send := DataSignerCrc32(data) + "~" + DataSignerCrc32(DataSignerMd5(data))
+		log.Printf("SingleHash for %s: %s", data, send)
+		out <- send
 	}
 }
 
 // MultiHash считает значение crc32(th+data)) (конкатенация цифры, приведённой к строке и строки), где th=0..5 ( т.е. 6 хешей на каждое входящее значение )
 func MultiHash(in, out chan interface{}) {
+	results := make([]string, 6)
 	for value := range in {
 		data, ok := value.(string)
 		if !ok {
 			panic("Non string data sent")
 		}
 		for i := 0; i < 6; i++ {
-			out <- string(i) + DataSignerCrc32(data)
+			results[i] = DataSignerCrc32(fmt.Sprintf("%1d%s", i, data))
 		}
+		//  потом берёт конкатенацию результатов в порядке расчета (0..5), где data - то что пришло на вход (и ушло на выход из SingleHash)
+		joined := strings.Join(results, "")
+		log.Printf("%s:MultiHash result: %s", data, joined)
+		out <- joined
 	}
 }
 
 // CombineResults получает все результаты, сортирует (https://golang.org/pkg/sort/), объединяет отсортированный результат через _ (символ подчеркивания) в одну строку
 func CombineResults(in, out chan interface{}) {
-	results := make([]string, 6)
-	for i := 0; i < 6; i++ {
-		data, ok := (<-in).(string)
+	results := make([]string, 0, 100)
+	for data_raw := range in {
+		data, ok := (data_raw).(string)
 		if !ok {
 			panic("Non string data sent")
 		}
-		results[i] = data
+		results = append(results, data)
 	}
 	sort.Strings(results)
 	joined := strings.Join(results, "_")
