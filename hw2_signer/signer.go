@@ -33,8 +33,38 @@ func ExecutePipeline(jobs ...job) {
 	wg.Wait() //  пока wg.Done() не приведёт счетчик к 0
 }
 
+type CRC32result struct {
+	id    int
+	value string
+}
+
+func DataSignerCrc32Job(id int, data string, out chan CRC32result, group *sync.WaitGroup) {
+	defer group.Done()
+
+	out <- CRC32result{id, DataSignerCrc32(data)}
+	return
+}
+
+func RunDataSigner(separator string, datain ...string) string {
+	wg := &sync.WaitGroup{} // инициализируем группу
+	resultsCh := make(chan CRC32result, len(datain))
+
+	for i, data := range datain {
+		wg.Add(1)
+		go DataSignerCrc32Job(i, data, resultsCh, wg)
+	}
+	wg.Wait()
+	dataout := make([]string, len(datain))
+	for _ = range dataout {
+		result := <-resultsCh
+		dataout[result.id] = result.value
+	}
+	return strings.Join(dataout, separator)
+}
+
 // считает значение crc32(data)+"~"+crc32(md5(data)) ( конкатенация двух строк через ~), где data - то что пришло на вход (по сути - числа из первой функции)
 func SingleHash(in, out chan interface{}) {
+	wg := &sync.WaitGroup{} // инициализируем группу
 	for value := range in {
 		data := ""
 		switch value.(type) {
@@ -45,14 +75,25 @@ func SingleHash(in, out chan interface{}) {
 		default:
 			panic("Non string data sent")
 		}
-		send := DataSignerCrc32(data) + "~" + DataSignerCrc32(DataSignerMd5(data))
-		log.Printf("SingleHash for %s: %s", data, send)
-		out <- send
+		// TODO - limit call?
+		md5 := DataSignerMd5(data)
+		log.Printf("MD5 for %s: %s", data, md5)
+		wg.Add(1)
+		go runSingle(data, md5, out, wg)
 	}
+	wg.Wait()
+}
+
+func runSingle(data string, md5 string, out chan interface{}, group *sync.WaitGroup) {
+	defer group.Done()
+	send := RunDataSigner("~", data, md5)
+	log.Printf("SingleHash for %s: %s", data, send)
+	out <- send
 }
 
 // MultiHash считает значение crc32(th+data)) (конкатенация цифры, приведённой к строке и строки), где th=0..5 ( т.е. 6 хешей на каждое входящее значение )
 func MultiHash(in, out chan interface{}) {
+	wg := &sync.WaitGroup{} // инициализируем группу
 	results := make([]string, 6)
 	for value := range in {
 		data, ok := value.(string)
@@ -60,13 +101,20 @@ func MultiHash(in, out chan interface{}) {
 			panic("Non string data sent")
 		}
 		for i := 0; i < 6; i++ {
-			results[i] = DataSignerCrc32(fmt.Sprintf("%1d%s", i, data))
+			results[i] = fmt.Sprintf("%1d%s", i, data)
 		}
-		//  потом берёт конкатенацию результатов в порядке расчета (0..5), где data - то что пришло на вход (и ушло на выход из SingleHash)
-		joined := strings.Join(results, "")
-		log.Printf("%s:MultiHash result: %s", data, joined)
-		out <- joined
+		wg.Add(1)
+		go runMultiple(results, data, out, wg)
 	}
+	wg.Wait()
+}
+
+func runMultiple(results []string, data string, out chan interface{}, group *sync.WaitGroup) {
+	defer group.Done()
+	//  потом берёт конкатенацию результатов в порядке расчета (0..5), где data - то что пришло на вход (и ушло на выход из SingleHash)
+	joined := RunDataSigner("", results...)
+	log.Printf("%s:MultiHash result: %s", data, joined)
+	out <- joined
 }
 
 // CombineResults получает все результаты, сортирует (https://golang.org/pkg/sort/), объединяет отсортированный результат через _ (символ подчеркивания) в одну строку
