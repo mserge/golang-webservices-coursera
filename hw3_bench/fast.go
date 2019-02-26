@@ -27,7 +27,7 @@ func FastSearch(out io.Writer) {
 	}
 
 	matchBrowsers := []string{"Android", "MSIE"}
-	seenBrowsers := make(map[string]bool, 128) // preallocate for 1000 browsers
+	seenBrowsers := make(map[string]bool, 128) // preallocate for 128 browsers
 	i := -1                                    // headers
 	scanner := bufio.NewScanner(file)
 	user := User{}
@@ -66,5 +66,12 @@ USERS:
 /*
 BenchmarkSlow-8               10         102341950 ns/op        319475647 B/op    276175 allocs/op
 BenchmarkFast-8              500           2461296 ns/op          487200 B/op       6425 allocs/op
+											41							655				42
+BenchmarkSlow-8               10         124178270 ns/op        319475184 B/op    276177 allocs/op
+BenchmarkFast-8              500           2717256 ns/op          487204 B/op       6425 allocs/op
 
+											45
+BenchmarkSolution							51							601				27
+BenchmarkSlow-8 10 							142703250 ns/op 		336887900 B/op 284175 allocs/op
+BenchmarkSolution-8 500 					2782432 ns/op 			559910 B/op 	10422 allocs/op
 */
