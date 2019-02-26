@@ -51,7 +51,6 @@ USERS:
 			}
 			if matched[0] && matched[1] { // at some point we found - no need to go further - can be many AND
 				// log.Println("Android and MSIE user:", user["name"], user["email"])
-				// TODO - buffer?
 				fmt.Fprintf(out, "[%d] %s <%s>\n", i, user.Name, strings.Replace(user.Email, "@", " [at] ", 1))
 				continue USERS
 			}
@@ -65,6 +64,7 @@ USERS:
 }
 
 /*
-BenchmarkSlow-8               10         105465760 ns/op        319474528 B/op    276173 allocs/op
-BenchmarkFast-8              100          11389521 ns/op         5437302 B/op      59758 allocs/op
+BenchmarkSlow-8               10         102341950 ns/op        319475647 B/op    276175 allocs/op
+BenchmarkFast-8              500           2461296 ns/op          487200 B/op       6425 allocs/op
+
 */
