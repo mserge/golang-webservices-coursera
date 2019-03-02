@@ -49,6 +49,46 @@ func main() {
 	fmt.Fprintln(out, `import "bytes"`)
 	fmt.Fprintln(out) // empty line
 
+	fmt.Printf("First run for pkg: %s in file %s", node.Name.Name, os.Args[1])
+FUNC_LOOP:
+	for _, f := range node.Decls {
+		fun, ok := f.(*ast.FuncDecl)
+		if !ok {
+			fmt.Printf("SKIP %T is not *ast.FuncDecl\n", f)
+			continue
+		}
+		fmt.Printf("ANALYZE func %#v \n", fun.Name.Name)
+		if fun.Doc == nil {
+			fmt.Printf("SKIP func %#v doesnt have comments\n", fun.Name.Name)
+			continue
+		}
+		needCodegen := false
+		jsonStruct := ""
+		name := ""
+		for _, comment := range fun.Doc.List {
+			PREFIX := "// apigen:api"
+			needCodegen = needCodegen || strings.HasPrefix(comment.Text, PREFIX)
+			jsonStruct = jsonStruct + comment.Text[len(PREFIX):]
+		}
+		if !needCodegen {
+			fmt.Printf("SKIP func %#v doesnt have api mark\n", fun.Name.Name)
+			continue FUNC_LOOP
+		}
+
+		fmt.Printf("meta func %#v %s \n", fun.Name.Name, jsonStruct)
+		if field := fun.Recv.List[0]; field != nil {
+			if star, ok := field.Type.(*ast.StarExpr); ok {
+				if ident, ok := star.X.(*ast.Ident); ok {
+					name = ident.Name
+					fmt.Printf("need to generate type %s\n", name)
+				}
+			}
+		}
+		for _, paramfield := range fun.Type.Params.List {
+			fmt.Printf("field: %#v \n", paramfield.Type)
+		}
+
+	}
 	for _, f := range node.Decls {
 		g, ok := f.(*ast.GenDecl)
 		if !ok {
@@ -69,48 +109,45 @@ func main() {
 				continue
 			}
 
-			if g.Doc == nil {
-				fmt.Printf("SKIP struct %#v doesnt have comments\n", currType.Name.Name)
-				continue
-			}
-
-			needCodegen := false
-			for _, comment := range g.Doc.List {
-				needCodegen = needCodegen || strings.HasPrefix(comment.Text, "// cgen: binpack")
-			}
+			needCodegen := true
+			//jsonStruct := ""
+			//for _, comment := range g.Doc.List {
+			//
+			//}
 			if !needCodegen {
-				fmt.Printf("SKIP struct %#v doesnt have cgen mark\n", currType.Name.Name)
+				fmt.Printf("SKIP struct %#v doesnt needed by func pass \n", currType.Name.Name)
 				continue SPECS_LOOP
 			}
 
 			fmt.Printf("process struct %s\n", currType.Name.Name)
-			fmt.Printf("\tgenerating Unpack method\n")
 
-			fmt.Fprintln(out, "func (in *"+currType.Name.Name+") Unpack(data []byte) error {")
+			fmt.Printf("\tgenerating validation method\n")
+
+			fmt.Fprintln(out, "func (in *"+currType.Name.Name+") validate(data []byte) error {")
 			fmt.Fprintln(out, "	r := bytes.NewReader(data)")
 
 		FIELDS_LOOP:
 			for _, field := range currStruct.Fields.List {
-
 				if field.Tag != nil {
+					//fmt.Printf(" analyze field: %v", field)
 					tag := reflect.StructTag(field.Tag.Value[1 : len(field.Tag.Value)-1])
-					if tag.Get("cgen") == "-" {
+					if tag.Get("apivalidator") == "" {
 						continue FIELDS_LOOP
 					}
-				}
 
-				fieldName := field.Names[0].Name
-				fileType := field.Type.(*ast.Ident).Name
+					fieldName := field.Names[0].Name
+					fileType := field.Type.(*ast.Ident).Name
 
-				fmt.Printf("\tgenerating code for field %s.%s\n", currType.Name.Name, fieldName)
+					fmt.Printf("\tgenerating code for field %s.%s\n", currType.Name.Name, fieldName)
 
-				switch fileType {
-				case "int":
-					intTpl.Execute(out, tpl{fieldName})
-				case "string":
-					strTpl.Execute(out, tpl{fieldName})
-				default:
-					log.Fatalln("unsupported", fileType)
+					switch fileType {
+					case "int":
+						intTpl.Execute(out, tpl{fieldName})
+					case "string":
+						strTpl.Execute(out, tpl{fieldName})
+					default:
+						log.Fatalln("unsupported", fileType)
+					}
 				}
 			}
 
