@@ -28,6 +28,13 @@ type EnumFieldTpl struct {
 	AllowedValues []string
 }
 
+type RangeFieldTpl struct {
+	FieldTpl
+	Func         string
+	Operation    string
+	CompareValue string
+}
+
 type EndPoint struct {
 	FuncName string
 	URL      string `json:"url"`
@@ -46,6 +53,13 @@ var (
 	 in.{{.FieldName}}, err = strconv.Atoi(r.FormValue("{{.ParamName}}"))
 	if err != nil {
 		return ApiError{ http.StatusBadRequest, fmt.Errorf("{{.ParamName}} must be int")}
+	}
+`))
+
+	rangeTpl = template.Must(template.New("rangeTpl").Parse(`
+	// range  {{.FieldName}}
+	if ! ({{.Func}} (in.{{.FieldName}}) {{.Operation}} {{.CompareValue}}) {
+		return ApiError{ http.StatusBadRequest, fmt.Errorf("{{.ParamName}} {{.Func}}must be {{.Operation}} {{.CompareValue}}") }
 	}
 `))
 
@@ -321,13 +335,22 @@ FUNC_LOOP:
 					if values["enum"] != "" {
 						enumTpl.Execute(out, EnumFieldTpl{fieldTpl, strings.Split(values["enum"], "|")})
 					}
+					potentialOperation := ""
 					switch fileType {
 					case "int":
 						intTpl.Execute(out, fieldTpl)
 					case "string":
 						strTpl.Execute(out, fieldTpl)
+						potentialOperation = "len "
+
 					default:
 						log.Fatalln("unsupported", fileType)
+					}
+					if values["min"] != "" {
+						rangeTpl.Execute(out, RangeFieldTpl{fieldTpl, potentialOperation, ">=", values["min"]})
+					}
+					if values["max"] != "" {
+						rangeTpl.Execute(out, RangeFieldTpl{fieldTpl, potentialOperation, "<=", values["max"]})
 					}
 				}
 			}
