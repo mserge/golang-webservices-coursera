@@ -35,14 +35,19 @@ var (
 	// int {{.FieldName}}
 	 in.{{.FieldName}}, err = strconv.Atoi(r.FormValue("{{.ParamName}}"))
 	if err != nil {
-		return ApiError{ http.StatusBadRequest, fmt.Errorf("{{.FieldName}} must be int")}
+		return ApiError{ http.StatusBadRequest, fmt.Errorf("{{.ParamName}} must be int")}
 	}
 `))
 
 	strTpl = template.Must(template.New("strTpl").Parse(`
 	// string {{.FieldName}}
-	// int {{.FieldName}}
 	in.{{.FieldName}} = r.FormValue("{{.ParamName}}")
+`))
+	requiredTpl = template.Must(template.New("requiredTpl").Parse(`
+	// required {{.FieldName}}
+	if r.FormValue("{{.ParamName}}") == "" {
+		return ApiError{ http.StatusBadRequest, fmt.Errorf("{{.ParamName}} must me not empty")}
+	}
 `))
 
 	serveTpl = template.Must(template.New("serveTpl").Parse(`
@@ -51,7 +56,7 @@ func (h *{{.HandlerName}} ) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     switch r.URL.Path {
 		{{range .EndPoints}} 
 		case "{{.URL}}": 
-			h.handler{{.FuncName}}(w, r)
+			methodMiddleware("{{.Method}}", authMiddleware({{.Auth}}, h.handler{{.FuncName}}())).ServeHTTP(w, r)
 		{{end}}
     default:
         // 404
@@ -84,6 +89,26 @@ func  writeResponse(w http.ResponseWriter, response interface{}, err error){
 	if err == nil {
 		w.Write(resencode)
 	}
+}
+func methodMiddleware(method string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if method != "" && r.Method !=  method {
+			writeResponse(w, nil, ApiError{406, fmt.Errorf("method not allowed")})
+		} else {
+			next.ServeHTTP(w, r)
+		}
+
+	})
+}
+func authMiddleware(required bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if required && r.Header.Get("X-Auth") !=  "100500" {
+			writeResponse(w, nil, ApiError{403, fmt.Errorf("unauthorized")})
+		} else {
+			next.ServeHTTP(w, r)
+		}
+
+	})
 }
 `
 )
@@ -155,7 +180,8 @@ FUNC_LOOP:
 					}
 					apis[name] = api
 
-					fmt.Fprintf(out, ` func (h *%s ) handler%s(w http.ResponseWriter, r *http.Request) {
+					fmt.Fprintf(out, ` func (h *%s ) handler%s() http.Handler {
+	 return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 `, name, fun.Name.Name)
 					// заполнение структуры params
 					params := make([]string, 0, 1)
@@ -179,6 +205,7 @@ FUNC_LOOP:
 					// прочие обработки
 					fmt.Fprintln(out, ` 	}
 	 	writeResponse(w, res, err)	
+	})
 }
 `)
 				}
@@ -247,12 +274,28 @@ FUNC_LOOP:
 					fileType := field.Type.(*ast.Ident).Name
 
 					fmt.Printf("\tgenerating code for field %s.%s with validation: %s\n", currType.Name.Name, fieldName, apiValidatorTag)
-
+					options := strings.Split(apiValidatorTag, ",")
+					values := make(map[string]string)
+					fieldTpl := FieldTpl{fieldName, strings.ToLower(fieldName)}
+					for _, option := range options {
+						if strings.Contains(option, "=") {
+							option_args := strings.Split(option, "=")
+							values[option_args[0]] = option_args[1]
+						} else {
+							values[option] = "set"
+						}
+					}
+					if values["paramname"] != "" {
+						fieldTpl.ParamName = values["paramname"]
+					}
+					if values["required"] != "" { // default value
+						requiredTpl.Execute(out, fieldTpl)
+					}
 					switch fileType {
 					case "int":
-						intTpl.Execute(out, FieldTpl{fieldName, strings.ToLower(fieldName)})
+						intTpl.Execute(out, fieldTpl)
 					case "string":
-						strTpl.Execute(out, FieldTpl{fieldName, strings.ToLower(fieldName)})
+						strTpl.Execute(out, fieldTpl)
 					default:
 						log.Fatalln("unsupported", fileType)
 					}
