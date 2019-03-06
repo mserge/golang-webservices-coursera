@@ -18,6 +18,16 @@ type FieldTpl struct {
 	ParamName string
 }
 
+type DefaultFieldTpl struct {
+	FieldTpl
+	DefaultValue string
+}
+
+type EnumFieldTpl struct {
+	FieldTpl
+	AllowedValues []string
+}
+
 type EndPoint struct {
 	FuncName string
 	URL      string `json:"url"`
@@ -49,7 +59,22 @@ var (
 		return ApiError{ http.StatusBadRequest, fmt.Errorf("{{.ParamName}} must me not empty")}
 	}
 `))
+	defaultTpl = template.Must(template.New("defaultTpl").Parse(`
+	// default {{.FieldName}}
+	if r.FormValue("{{.ParamName}}") == "" {
+		r.Form.Set("{{.ParamName}}" ,"{{.DefaultValue}}")
+	}
+`))
 
+	enumTpl = template.Must(template.New("enumTpl").Parse(`
+	// enum {{.FieldName}}
+	switch  r.FormValue("{{.ParamName}}") {
+		case {{range $i,$a := .AllowedValues}} {{if gt $i 0 }} , {{end}} "{{.}}" {{end}}:
+		default:
+		return ApiError{ http.StatusBadRequest, fmt.Errorf("{{.ParamName}} must be one of [{{range $i,$a := .AllowedValues}}{{if gt $i 0 }}, {{end}}{{.}}{{end}}]")}
+
+	}
+`))
 	serveTpl = template.Must(template.New("serveTpl").Parse(`
 // {{.HandlerName}}
 func (h *{{.HandlerName}} ) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +118,7 @@ func  writeResponse(w http.ResponseWriter, response interface{}, err error){
 func methodMiddleware(method string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if method != "" && r.Method !=  method {
-			writeResponse(w, nil, ApiError{406, fmt.Errorf("method not allowed")})
+			writeResponse(w, nil, ApiError{406, fmt.Errorf("bad method")})
 		} else {
 			next.ServeHTTP(w, r)
 		}
@@ -288,8 +313,13 @@ FUNC_LOOP:
 					if values["paramname"] != "" {
 						fieldTpl.ParamName = values["paramname"]
 					}
-					if values["required"] != "" { // default value
+					if values["default"] != "" {
+						defaultTpl.Execute(out, DefaultFieldTpl{fieldTpl, values["default"]})
+					} else if values["required"] != "" { // default value
 						requiredTpl.Execute(out, fieldTpl)
+					}
+					if values["enum"] != "" {
+						enumTpl.Execute(out, EnumFieldTpl{fieldTpl, strings.Split(values["enum"], "|")})
 					}
 					switch fileType {
 					case "int":
